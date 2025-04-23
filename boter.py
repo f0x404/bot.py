@@ -1,56 +1,68 @@
-from pyrogram import Client, filters
-from PIL import Image, ImageFilter
-import io
-import os
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from PIL import Image, ImageEnhance, ImageFilter
+from io import BytesIO
+import numpy as np
 
-# زانیاری بۆت لێرە دانێ
-api_id = 16871970  # گۆڕە بە api_id خۆت
-api_hash = "5f3cf7cb43fa552e8136555a5155a9c8"  # api_hash
-bot_token = "7910838916:AAHOauvJduFaQKF5nVBJhMxFOBRuV71oGMA"  # token لە BotFather وەربگرە
+# Custom Lightroom-style filter
+def apply_custom_filter(img: Image.Image) -> Image.Image:
+    # Exposure +0.75
+    img = ImageEnhance.Brightness(img).enhance(1.75)
 
-app = Client("image_cleaner_bot",
-             api_id=api_id,
-             api_hash=api_hash,
-             bot_token=bot_token)
+    # Contrast -30
+    img = ImageEnhance.Contrast(img).enhance(0.7)
 
+    # Saturation +20
+    img = ImageEnhance.Color(img).enhance(1.2)
 
-# فرمانی /start
-@app.on_message(filters.command("start"))
-async def start_handler(client, message):
-  await message.reply_text(
-      "سڵاو! من بوتێکم بۆ سافکردنی وێنەکان. تکایە وێنە بنێرە!")
+    # Sharpness / Clarity +15
+    img = ImageEnhance.Sharpness(img).enhance(2.0)
 
+    # Highlights, Shadows, Whites, Blacks simulated (basic method)
+    arr = np.array(img).astype(np.int16)
+    arr = arr + 3  # Shadows +3
+    arr = np.clip(arr, 0, 255)
 
-# وەرگرتنی وێنە و چاککردنی
-@app.on_message(filters.photo)
-async def photo_handler(client, message):
-  await message.reply_text("وێنەکەت وەرگیرا... ساف دەکەم!")
+    img = Image.fromarray(arr.astype(np.uint8))
 
-  # داگرتنی فایلەکە
-  file_path = await message.download()
+    # Grain +5
+    noise = np.random.normal(0, 5, arr.shape).astype(np.uint8)
+    grainy = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    img = Image.fromarray(grainy)
 
-  try:
-    # کرتەکردنەوەی وێنە
-    img = Image.open(file_path)
+    return img
 
-    # فلتەرکردن
-    filtered_img = img.filter(ImageFilter.DETAIL)
+# Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("سڵاو! وێنە بنێرە بۆ فلتەرکراوی بە شێوازی Lightroom.")
 
-    # گەڕاندنەوە بۆ بایتس بۆ ناردن
-    output = io.BytesIO()
-    output.name = "cleaned.jpg"
-    filtered_img.save(output, format="JPEG")
-    output.seek(0)
+# Handle photo
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        photo = update.message.photo[-1]
+        file = await photo.get_file()
+        image_bytes = await file.download_as_bytearray()
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
 
-    # ناردنی وێنەی سافکراو
-    await message.reply_photo(photo=output, caption="ئەمە وێنەی سافکراوە!")
+        filtered = apply_custom_filter(image)
 
-  except Exception as e:
-    await message.reply_text(f"هەڵەیەک ڕوویدا: {e}")
+        output = BytesIO()
+        filtered.save(output, format="JPEG")
+        output.seek(0)
 
-  finally:
-    if os.path.exists(file_path):
-      os.remove(file_path)
+        await update.message.reply_photo(photo=output, caption="وێنەکەت بە فلتەری تایبەتی سەرەکی فلتەر کرا!")
 
+    except Exception as e:
+        await update.message.reply_text(f"هەڵەیەک ڕوویدا: {e}")
 
-app.run()
+# Run bot
+def main():
+    app = Application.builder().token("7889615610:AAGhVmzVmGSuE7RkPmfWwjCFoWspRug_ZP4").build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    print("Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
